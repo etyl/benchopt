@@ -557,7 +557,9 @@ g.hovertext:has(path + [data-unformatted*="lower fence"])
      keeps the figure (and its right handle) clear of the scrollbar. */
   flex: none;
   position: relative;
-  max-width: calc(100% - 1rem);
+  /* Margin, not padding, so it stays outside the box Plotly measures. */
+  margin: 1.5rem;
+  max-width: calc(100% - 4rem); /* 3rem of margin + 1rem clear of the scrollbar */
 }
 
 /* Drag handles on the right, bottom, and bottom-right corner of the figure. */
@@ -632,13 +634,41 @@ g.hovertext:has(path + [data-unformatted*="lower fence"])
     transparent 78%);
 }
 
-/* Compact size readout, tucked into the figure's bottom-right corner (left of
-   the diagonal handle). Stays out of the way until you hover the figure or
+/* Shift the figure's own handles out into its margin, so they sit beside the
+   plot instead of over it. Scoped to the figure divs: the legend carries a
+   .resize-handle-x too, and that one belongs on the legend's edge. */
+#plot_container,
+#plot_with_legend_container {
+  --handle: 10px;      /* thickness of the drag bands */
+  --handle-xy: 20px;   /* corner grip */
+  --handle-gap: 4px;   /* clear space between a band and the plot */
+  --handle-offset: calc(-1 * (var(--handle) + var(--handle-gap)));
+}
+#plot_container > .resize-handle-x,
+#plot_with_legend_container > .resize-handle-x {
+  right: var(--handle-offset);
+  width: var(--handle);
+}
+#plot_container > .resize-handle-y,
+#plot_with_legend_container > .resize-handle-y {
+  bottom: var(--handle-offset);
+  height: var(--handle);
+}
+#plot_container > .resize-handle-xy,
+#plot_with_legend_container > .resize-handle-xy {
+  right: var(--handle-offset);
+  bottom: var(--handle-offset);
+  width: var(--handle-xy);
+  height: var(--handle-xy);
+}
+
+/* Compact size readout, tucked into the figure's bottom-right corner (the
+   handles sit outside it). Stays out of the way until you hover the figure or
    drag a handle. JS appends it into the current figure div. */
 #figsize_controls {
   position: absolute;
   bottom: 0.5rem;
-  right: 1.5rem;
+  right: 0.5rem;
   z-index: 7;
   gap: 0.25rem;
   padding: 0.15rem 0.4rem;

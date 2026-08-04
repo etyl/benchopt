@@ -1092,6 +1092,24 @@ const MPL_LAYOUT = {
   font: { family: 'DejaVu Sans, Arial, sans-serif', color: 'black' },
 };
 
+const TITLE_LINE_HEIGHT = 22;  // one title line at the default 17px font
+const TITLE_GAP = 7;           // space left under the title
+
+const axisTitle = (text) => ({ text, standoff: 10 });
+
+// Top margin sized from the title's line count; the title block is centered on
+// half of it, hence the 2x. Left/right/bottom are grown by the axes' automargin.
+const titleLayout = (text) => {
+  const lines = String(text).split(/<br\s*\/?>/).length;
+  return {
+    title: { text },
+    margin: {
+      l: 5, r: 5, b: 5,
+      t: 2 * (TITLE_LINE_HEIGHT * lines + TITLE_GAP) - 30,
+    },
+  };
+};
+
 const getBarChartLayout = () => {
   let data = getPlotData();
   const layout = {
@@ -1102,7 +1120,7 @@ const getBarChartLayout = () => {
     yaxis: {
       ...MPL_AXIS,
       type: getScale().yaxis,
-      title: data["ylabel"],
+      title: axisTitle(data["ylabel"]),
     },
     xaxis: {
       ...MPL_AXIS,
@@ -1111,7 +1129,7 @@ const getBarChartLayout = () => {
       showgrid: false,  // X axis is text: no vertical gridlines
     },
     showlegend: false,
-    title: data["title"],
+    ...titleLayout(data["title"]),
     ...MPL_LAYOUT,
   };
 
@@ -1148,7 +1166,7 @@ const getBoxplotChartLayout = () => {
     yaxis: {
       ...MPL_AXIS,
       type: getScale().yaxis,
-      title: plot_info["ylabel"],
+      title: axisTitle(plot_info["ylabel"]),
     },
     xaxis: {
       ...MPL_AXIS,
@@ -1156,7 +1174,7 @@ const getBoxplotChartLayout = () => {
       showgrid: typeof plot_info.data[0].x[0] !== "string",  // hide vertical gridlines for text X axis
     },
     showlegend: false,
-    title: plot_info["title"],
+    ...titleLayout(plot_info["title"]),
     ...MPL_LAYOUT,
   };
 
@@ -1190,15 +1208,15 @@ const getScatterChartLayout = () => {
     xaxis: {
       ...MPL_AXIS,
       type: getScale().xaxis,
-      title: customData.xlabel,
+      title: axisTitle(customData.xlabel),
       tickangle: 0,
     },
     yaxis: {
       ...MPL_AXIS,
       type: getScale().yaxis,
-      title: customData.ylabel,
+      title: axisTitle(customData.ylabel),
     },
-    title: `${customData.title}`,
+    ...titleLayout(`${customData.title}`),
     ...MPL_LAYOUT,
   };
 
