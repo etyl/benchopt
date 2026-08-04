@@ -192,14 +192,15 @@ const setFigSize = () => {
 // (Re)create the drag handles on the right ('x') and bottom ('y') edges.
 // Plotly.purge leaves these children in place, so clear any stale ones first.
 const addResizeHandles = (div) => {
-  // Clear from plot_container (the common ancestor) so handles left on the
-  // other chart type's div are removed too, not just those inside `div`.
-  document.getElementById('plot_container')
-    .querySelectorAll('.resize-handle').forEach(h => h.remove());
+  // Clear both figure divs so handles left on the other chart type's div are
+  // removed too. Direct children only: the legend has its own handle.
+  document.querySelectorAll(
+    '#plot_container > .resize-handle, #plot_with_legend_container > .resize-handle'
+  ).forEach(h => h.remove());
   ['x', 'y', 'xy'].forEach(axis => div.appendChild(makeResizeHandle(div, axis)));
 };
 
-const makeResizeHandle = (div, axis) => {
+const makeResizeHandle = (div, axis, onResize = resizeFig) => {
   const handle = document.createElement('div');
   handle.className = `resize-handle resize-handle-${axis}`;
   handle.addEventListener('pointerdown', (e) => {
@@ -213,7 +214,7 @@ const makeResizeHandle = (div, axis) => {
         div.style.width = `${Math.max(200, startW + ev.clientX - startX)}px`;
       if (axis !== 'x')
         div.style.height = `${Math.max(200, startH + ev.clientY - startY)}px`;
-      resizeFig(div);
+      onResize(div);
     };
     const onUp = () => {
       div.classList.remove('resizing');
@@ -681,40 +682,156 @@ const exportLatex = (button) => {
   return false;
 };
 
-const exportPDF = () => {
-  // Same div renderPlot() drew into: legend container for scatter, else the
-  // plain plot container.
-  const plot = document.getElementById(
-    isChart('scatter') ? 'plot_with_legend_container' : 'plot_container');
+// Print via the browser's own renderer; the user picks "Save as PDF".
+// Laid out off-screen first so the page can be sized to
+// what actually rendered: no margin, no trailing blank page.
+const printToPDF = (bodyHTML, filename, css, width) => {
+  const frame = document.createElement('iframe');
+  frame.style.cssText =
+    `position:fixed;left:-10000px;top:0;border:0;width:${width}px;height:100px;`;
+  document.body.appendChild(frame);
+
+  const doc = frame.contentWindow.document;
+  doc.open();
+  doc.write(
+    '<!DOCTYPE html><html><head><title>' + filename + '</title><style>'
+    + 'html, body { margin: 0 } svg { display: block }'
+    + `body { width: ${width}px }`
+    + css + '</style></head><body>' + bodyHTML + '</body></html>');
+  doc.close();
+
+  const height = Math.ceil(doc.body.getBoundingClientRect().height) + 1;
+  const page = doc.createElement('style');
+  page.textContent = `@page { size: ${width}px ${height}px; margin: 0 }`;
+  doc.head.appendChild(page);
+
+  const win = frame.contentWindow;
+  win.onafterprint = () => frame.remove();
+  win.focus();
+  win.print();
+};
+
+const exportFilename = () => state().objective + '_' + state().dataset + '_'
+  + state().objective_column + '_' + state().plot_kind;
+
+// The legend is plain HTML: print a clone of it with the page's own
+// stylesheets, minus the page padding and the drag handle.
+const legendPrintCSS = () =>
+  Array.from(document.querySelectorAll('style'), s => s.textContent).join('\n')
+  // !important: the clone carries the inline width set by the resize handle.
+  + '#plot_legend { width: auto !important; padding: 0;'
+  + ' justify-content: center }'
+  + '.resize-handle { display: none }'
+  // The curve lines are background colors, which Chrome drops when printing.
+  + '* { -webkit-print-color-adjust: exact; print-color-adjust: exact }'
+  + '#plot_legend * { box-shadow: none }';
+
+// Content width, so legend items wrap in the PDF exactly as they do on
+// screen (the resize handle sets this width too).
+const legendPrintWidth = () => {
+  const legend = document.getElementById('plot_legend');
+  const padding = getComputedStyle(legend);
+  return Math.round(legend.clientWidth
+    - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight));
+};
+
+// Matplotlib's loc='best', roughly: drop the legend in whichever corner of the
+// axes holds the fewest visible data points.
+const bestLegendCorner = (data, layout) => {
+  const corners = [
+    {x: 0.98, y: 0.98, xanchor: 'right', yanchor: 'top'},
+    {x: 0.02, y: 0.98, xanchor: 'left', yanchor: 'top'},
+    {x: 0.98, y: 0.02, xanchor: 'right', yanchor: 'bottom'},
+    {x: 0.02, y: 0.02, xanchor: 'left', yanchor: 'bottom'},
+  ];
+
+  // Log axes compared in decades, like the plot draws them.
+  const scale = axis => axis.type === 'log' ? Math.log10 : (v => v);
+  const xs = [], ys = [];
+  data.filter(trace => trace.visible === true && trace.x && trace.y)
+    .forEach(trace => {
+      const x = trace.x.map(scale(layout.xaxis));
+      const y = trace.y.map(scale(layout.yaxis));
+      x.forEach((xi, i) => {
+        if (isFinite(xi) && isFinite(y[i])) { xs.push(xi); ys.push(y[i]); }
+      });
+    });
+  if (xs.length === 0) return corners[0];
+
+  const range = values => values.reduce(
+    ([lo, hi], v) => [Math.min(lo, v), Math.max(hi, v)], [Infinity, -Infinity]);
+  const [xmin, xmax] = range(xs);
+  const [ymin, ymax] = range(ys);
+  const norm = (v, lo, hi) => hi > lo ? (v - lo) / (hi - lo) : 0.5;
+
+  const BOX = 0.4;  // share of the axes the legend is assumed to cover
+  const crowding = corner => xs.reduce((count, x, i) => {
+    const u = norm(x, xmin, xmax), v = norm(ys[i], ymin, ymax);
+    const inX = corner.xanchor === 'right' ? u > 1 - BOX : u < BOX;
+    const inY = corner.yanchor === 'top' ? v > 1 - BOX : v < BOX;
+    return count + (inX && inY ? 1 : 0);
+  }, 0);
+
+  return corners.reduce(
+    (best, corner) => crowding(corner) < crowding(best) ? corner : best,
+    corners[0]);
+};
+
+// Dropdown next to the PDF button, listing what the export can contain. The
+// arrow sits inside the button, so its click must not trigger the export.
+const togglePDFMenu = (event) => {
+  if (event) event.stopPropagation();
+  const menu = document.getElementById('pdf-menu');
+  menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+  return false;
+};
+
+const closePDFMenu = () => {
+  document.getElementById('pdf-menu').style.display = 'none';
+  return false;
+};
+
+document.addEventListener('click', event => {
+  if (!event.target.closest('.pdf-export-btn')) closePDFMenu();
+});
+
+// kind: 'figure', 'legend' or 'both'. Defaults to legend-on-figure, except
+// for charts with no separate legend to add.
+const exportPDF = (kind) => {
+  closePDFMenu();
+  kind = kind || (isChart('scatter') ? 'both' : 'figure');
+  const filename = exportFilename()
+    + {figure: '', legend: '_legend', both: '_with_legend'}[kind];
+
+  if (kind === 'legend') {
+    printToPDF(document.getElementById('plot_legend').outerHTML, filename,
+               legendPrintCSS(), legendPrintWidth());
+    return false;
+  }
+
+  const plot = getPlotDiv();
   const width = plot.layout.width || plot.clientWidth;
   const height = plot.layout.height || plot.clientHeight;
-  const filename = state().objective + '_' + state().dataset + '_'
-    + state().objective_column + '_' + state().plot_kind;
 
-  // Print the vector SVG to PDF with the browser's own renderer (svg2pdf
-  // mangles the axes; the browser renders the SVG faithfully). The user picks
-  // "Save as PDF" in the print dialog.
-  Plotly.toImage(plot, {format: 'svg', width: width, height: height})
-    .then(dataUrl => {
-      const svgString = decodeURIComponent(dataUrl.split(',')[1]);
-      const frame = document.createElement('iframe');
-      frame.style.cssText = 'position:fixed;width:0;height:0;border:0;';
-      document.body.appendChild(frame);
+  // Render from a figure object, not the div, so the legend-on toggle only
+  // affects the export, not what's on screen.
+  let figure = plot;
+  if (kind === 'both') {
+    const data = getChartData();
+    // plot.layout, not getLayout(): it carries what is on screen right now,
+    // including the axis ranges and the log dtick applied on resize.
+    const layout = {...plot.layout, showlegend: true};
+    layout.legend = {
+      ...bestLegendCorner(data, layout),
+      bgcolor: 'rgba(255, 255, 255, 0.8)',
+      bordercolor: '#cccccc', borderwidth: 1,
+    };
+    figure = {data: data, layout: layout};
+  }
 
-      const doc = frame.contentWindow.document;
-      doc.open();
-      doc.write(
-        '<!DOCTYPE html><html><head><title>' + filename + '</title><style>'
-        + '@page { size: ' + width + 'px ' + height + 'px; margin: 0 }'
-        + 'html, body { margin: 0 } svg { display: block }'
-        + '</style></head><body>' + svgString + '</body></html>');
-      doc.close();
-
-      const win = frame.contentWindow;
-      win.onafterprint = () => frame.remove();
-      win.focus();
-      win.print();
-    })
+  Plotly.toImage(figure, {format: 'svg', width: width, height: height})
+    .then(dataUrl => printToPDF(
+      decodeURIComponent(dataUrl.split(',')[1]), filename, '', width))
     .catch(err => console.error('PDF export failed:', err));
 
   return false;
@@ -748,6 +865,14 @@ const renderExportButtons = () => {
     : ['.pdf-export-btn', '.latex-export-btn'];
   show(document.querySelectorAll(shown));
   hide(document.querySelectorAll(hidden));
+
+  // Only scatter has a legend outside the figure, so it is the only chart with
+  // something to choose from.
+  const toggle = document.getElementById('pdf-menu-toggle');
+  (isChart('scatter') ? show : hide)(toggle);
+  // Alone, the PDF button rounds on both sides again.
+  toggle.parentElement.classList.toggle('no-menu', !isChart('scatter'));
+  closePDFMenu();
 }
 
 /**
@@ -1572,7 +1697,18 @@ const renderLegend = () => {
       legend.appendChild(payload);
     }
   });
+
+  // Width drag handle (the height follows from how the items wrap). Appended
+  // last since the loop above starts from an empty legend.
+  legend.appendChild(makeResizeHandle(legend, 'x', clampLegendWidth));
+  legend.style.width = '';
 }
+
+// The legend never gets wider than the column holding it.
+const clampLegendWidth = (legend) => {
+  const max = legend.parentElement.clientWidth;
+  if (legend.offsetWidth > max) legend.style.width = `${max}px`;
+};
 
 /**
  * Creates a legend item which contains the curve name,
@@ -1635,11 +1771,12 @@ const createLegendItem = (curve, color, symbolNumber) => {
   textContainer.className = 'curve';
   textContainer.appendChild(document.createTextNode(curve));
 
-  // Create the horizontal bar in the legend to represent the curve
+  // A border, not a background: printing drops background colors unless the
+  // user ticks "Background graphics", borders always print.
   const hBar = document.createElement('div');
-  hBar.style.height = '2px';
+  hBar.style.height = '0';
   hBar.style.width = '30px';
-  hBar.style.backgroundColor = color;
+  hBar.style.borderTop = `2px solid ${color}`;
   hBar.style.position = 'absolute';
   hBar.style.left = '1em';
   hBar.style.zIndex = 10;
