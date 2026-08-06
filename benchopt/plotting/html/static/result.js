@@ -1522,7 +1522,8 @@ function renderTable() {
     return;
   }
 
-  const gridKey = [state().plot_kind, ...plotData.columns].join('|');
+  const dropdownValues = getPlotDropdowns().map(dropdown => state()[dropdown]);
+  const gridKey = [state().plot_kind, ...dropdownValues].join('|');
   if (tableGrid && tableGridKey === gridKey && !tablePendingView) {
     // Same table: refresh in place (e.g. after a precision change), keeping
     // the current sorting. The formatters read the global precision.
@@ -1531,6 +1532,12 @@ function renderTable() {
     tableGrid.forceRender();
     return;
   }
+
+  // Grid.js fills the table asynchronously: keep the new card at the previous
+  // grid height during a rebuild so the column pills and footer below don't
+  // jump around while the rows load.
+  const prevGrid = table_container.querySelector('.gridjs-container');
+  const prevGridHeight = prevGrid ? prevGrid.offsetHeight : 0;
 
   table_container.innerHTML = "";
 
@@ -1564,6 +1571,10 @@ function renderTable() {
     sort: true,
     search: true,
   });
+  if (prevGridHeight) {
+    card.style.minHeight = `${prevGridHeight}px`;
+    tableGrid.on('ready', () => card.style.minHeight = '');
+  }
   tableGrid.render(card);
   tableGridKey = gridKey;
 
@@ -1613,8 +1624,10 @@ function renderTable() {
       } else {
         tableHiddenColumns.add(name);
       }
-      setPillStyle(pill, checkbox.checked, name);
-      tableGrid.updateConfig({ columns: buildColumns() }).forceRender();
+      // Rebuild the grid from scratch: Grid.js' forceRender keeps the column
+      // widths pinned during the first render
+      tablePendingView = {order: getTableOrder(), hidden: [...tableHiddenColumns]};
+      renderTable();
     };
 
     label.appendChild(checkbox);
