@@ -1095,7 +1095,7 @@ const MPL_LAYOUT = {
 const TITLE_LINE_HEIGHT = 22;  // one title line at the default 17px font
 const TITLE_GAP = 7;           // space left under the title
 
-const axisTitle = (text) => ({ text, standoff: 10 });
+const axisTitle = (text) => ({ text, standoff: 10, font: { size: 15 } });
 
 // Top margin sized from the title's line count; the title block is centered on
 // half of it, hence the 2x. Left/right/bottom are grown by the axes' automargin.
