@@ -666,10 +666,23 @@ const exportLatex = (button) => {
     .replace(/~/g, '\\textasciitilde{}')
     .replace(/\^/g, '\\textasciicircum{}');
 
-  const latex = '\\begin{tabular}{' + 'l'.repeat(columns.length) + '}\n\\toprule\n'
-    + columns.map(escape).join(' & ') + ' \\\\\n\\midrule\n'
-    + rows.map(r => r.map(escape).join(' & ') + ' \\\\').join('\n')
-    + '\n\\bottomrule\n\\end{tabular}\n';
+  const title = (getPlotData() || {}).title;
+  let latex = "";
+  if (title) {
+    // Caption above the table, kept on a single line.
+    latex += "\\begin{table}[h]\n\\centering\n\\caption{";
+    latex += title.replace(/<br\s*\/?>/g, ", ").replaceAll('_', '\\_');
+    latex += "}\n";
+  }
+  latex += '\\begin{tabular}{';
+  latex += 'l'.repeat(columns.length);
+  latex += '}\n\\toprule\n';
+  latex += columns.map(escape).join(' & ');
+  latex += ' \\\\\n\\midrule\n';
+  latex += rows.map(r => r.map(escape).join(' & ');
+  latex += ' \\\\').join('\n');
+  latex += '\n\\bottomrule\n\\end{tabular}\n';
+  if (title) latex += "\n\\end{table}";
 
   // Flash feedback on the button label (the trailing span on the desktop
   // button, the link text itself in the mobile menu).
@@ -1542,17 +1555,25 @@ function renderTable() {
   table_container.innerHTML = "";
 
   // Restore the hidden columns / order from a saved view when one is being
-  // loaded, otherwise start fresh with the table's default order.
-  tableHiddenColumns = new Set();
-  if (tablePendingView && Array.isArray(tablePendingView.hidden)) {
-    const valid = tablePendingView.hidden.filter(c => plotData.columns.includes(c));
-    // Never hide every column.
-    if (valid.length < plotData.columns.length) {
-      valid.forEach(c => tableHiddenColumns.add(c));
-    }
-  }
+  // loaded, otherwise keep the ones set through the column toggles.
+  const hidden = tablePendingView && Array.isArray(tablePendingView.hidden)
+    ? tablePendingView.hidden : [...tableHiddenColumns];
+  const valid = hidden.filter(c => plotData.columns.includes(c));
+  // Never hide every column.
+  tableHiddenColumns = new Set(
+    valid.length < plotData.columns.length ? valid : []
+  );
   const orderedData = orderTableData(plotData, tablePendingView && tablePendingView.order);
   tablePendingView = null;
+
+  // Title. Titles are stored with plotly line breaks (<br />).
+  if (plotData.title) {
+    const titleEl = document.createElement('h2');
+    titleEl.className =
+      'text-xl text-center text-gray-800 mb-6 whitespace-pre-line';
+    titleEl.innerText = plotData.title.replace(/<br\s*\/?>/g, '\n');
+    table_container.appendChild(titleEl);
+  }
 
   // Grid.js table with sortable columns and a search bar
   const card = document.createElement("div");
