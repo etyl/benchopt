@@ -679,8 +679,7 @@ const exportLatex = (button) => {
   latex += '}\n\\toprule\n';
   latex += columns.map(escape).join(' & ');
   latex += ' \\\\\n\\midrule\n';
-  latex += rows.map(r => r.map(escape).join(' & ');
-  latex += ' \\\\').join('\n');
+  latex += rows.map(r => r.map(escape).join(' & ') + ' \\\\').join('\n');
   latex += '\n\\bottomrule\n\\end{tabular}\n';
   if (title) latex += "\n\\end{table}";
 
@@ -695,57 +694,174 @@ const exportLatex = (button) => {
   return false;
 };
 
-// Print via the browser's own renderer; the user picks "Save as PDF".
-// Laid out off-screen first so the page can be sized to
-// what actually rendered: no margin, no trailing blank page.
-const printToPDF = (bodyHTML, filename, css, width) => {
-  const frame = document.createElement('iframe');
-  frame.style.cssText =
-    `position:fixed;left:-10000px;top:0;border:0;width:${width}px;height:100px;`;
-  document.body.appendChild(frame);
+// svg2pdf lays <tspan>s out on its own and gets them wrong: the exponents of
+// the log ticks end up off the page.
+const flattenText = (svg) => {
+  svg.querySelectorAll('text').forEach(text => {
+    // Text nodes in rendering order, with where each one starts in the string.
+    const runs = [];
+    let index = 0;
+    const walk = node => node.childNodes.forEach(child => {
+      if (child.nodeType === Node.TEXT_NODE) {
+        runs.push({node: child, index: index, parent: node});
+        index += child.length;
+      } else {
+        walk(child);
+      }
+    });
+    walk(text);
 
-  const doc = frame.contentWindow.document;
-  doc.open();
-  doc.write(
-    '<!DOCTYPE html><html><head><title>' + filename + '</title><style>'
-    + 'html, body { margin: 0 } svg { display: block }'
-    + `body { width: ${width}px }`
-    + css + '</style></head><body>' + bodyHTML + '</body></html>');
-  doc.close();
+    const spans = runs.map(run => {
+      const content = run.node.data.replace(/−/g, '-')
+        .replace(/​/g, '');
+      if (content.trim() === '') return null;
 
-  const height = Math.ceil(doc.body.getBoundingClientRect().height) + 1;
-  const page = doc.createElement('style');
-  page.textContent = `@page { size: ${width}px ${height}px; margin: 0 }`;
-  doc.head.appendChild(page);
+      const at = text.getStartPositionOfChar(run.index);
+      const style = getComputedStyle(run.parent);
+      const span = svgNode('tspan', {
+        x: at.x, y: at.y, fill: style.fill,
+        'font-family': style.fontFamily, 'font-size': style.fontSize,
+        'font-weight': style.fontWeight, 'font-style': style.fontStyle,
+      });
+      span.textContent = content;
+      return span;
+    });
 
-  const win = frame.contentWindow;
-  win.onafterprint = () => frame.remove();
-  win.focus();
-  win.print();
+    // The runs carry their own position now, so the anchoring is already done.
+    text.setAttribute('text-anchor', 'start');
+    text.textContent = '';
+    spans.filter(span => span).forEach(span => text.appendChild(span));
+  });
 };
 
-const exportFilename = () => state().objective + '_' + state().dataset + '_'
-  + state().objective_column + '_' + state().plot_kind;
+// jsPDF only knows the standard PDF fonts, so the figures would come out in
+// Helvetica instead of the DejaVu Sans they are drawn with.
+const DEJAVU_URL =
+  'https://cdn.jsdelivr.net/npm/dejavu-fonts-ttf@2.37.3/ttf/DejaVuSans.ttf';
+let dejaVuFont = null;
+const embedDejaVu = (pdf) => {
+  dejaVuFont = dejaVuFont || fetch(DEJAVU_URL)
+    .then(response => response.blob())
+    .then(blob => new Promise(resolve => {
+      // Base64 without walking the 750kB of glyphs one character at a time.
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.readAsDataURL(blob);
+    }));
 
-// The legend is plain HTML: print a clone of it with the page's own
-// stylesheets, minus the page padding and the drag handle.
-const legendPrintCSS = () =>
-  Array.from(document.querySelectorAll('style'), s => s.textContent).join('\n')
-  // !important: the clone carries the inline width set by the resize handle.
-  + '#plot_legend { width: auto !important; padding: 0;'
-  + ' justify-content: center }'
-  + '.resize-handle { display: none }'
-  // The curve lines are background colors, which Chrome drops when printing.
-  + '* { -webkit-print-color-adjust: exact; print-color-adjust: exact }'
-  + '#plot_legend * { box-shadow: none }';
+  return dejaVuFont.then(base64 => {
+    pdf.addFileToVFS('DejaVuSans.ttf', base64);
+    pdf.addFont('DejaVuSans.ttf', 'DejaVu Sans', 'normal');
+  }).catch(err => console.warn('Falling back to Helvetica:', err));
+};
 
-// Content width, so legend items wrap in the PDF exactly as they do on
-// screen (the resize handle sets this width too).
-const legendPrintWidth = () => {
-  const legend = document.getElementById('plot_legend');
-  const padding = getComputedStyle(legend);
-  return Math.round(legend.clientWidth
-    - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight));
+// Write the PDF with jsPDF + svg2pdf.js.
+const svgToPDF = (svg, filename, width, height) => {
+  // svg2pdf measures text through getBBox, so the SVG has to be rendered:
+  // park it off-screen for the conversion.
+  svg.style.cssText = 'position:fixed;left:-10000px;top:0';
+  document.body.appendChild(svg);
+
+  flattenText(svg);
+
+  // The orientation has to match, jsPDF sorts the format to fit it otherwise.
+  const pdf = new window.jspdf.jsPDF({
+    unit: 'pt', format: [width, height],
+    orientation: width >= height ? 'landscape' : 'portrait',
+    putOnlyUsedFonts: true,  // or every export carries the 750kB of DejaVu
+  });
+  return embedDejaVu(pdf)
+    .then(() => pdf.svg(svg, {width: width, height: height, x: 0, y: 0}))
+    .then(() => pdf.save(filename + '.pdf'))
+    .catch(err => console.error('PDF export failed:', err))
+    .then(() => svg.remove());
+};
+
+const exportFilename = () => [state().plot_kind,
+  ...getPlotDropdowns().map(dropdown => state()[dropdown])].join('_');
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const svgNode = (tag, attrs) => {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const key in attrs) node.setAttribute(key, attrs[key]);
+  return node;
+};
+
+// The legend is plain HTML, so redraw it as an SVG, reading the position of
+// every piece from the live layout: the export then wraps exactly like what
+// is on screen, whatever width the resize handle was dragged to.
+const legendSVG = () => {
+  const items = Array.from(document.querySelectorAll('#plot_legend .curve'),
+                           label => label.parentElement);
+  const bounds = items.map(item => item.getBoundingClientRect());
+  const left = Math.min(...bounds.map(b => b.left));
+  const top = Math.min(...bounds.map(b => b.top));
+  const width = Math.ceil(Math.max(...bounds.map(b => b.right)) - left);
+  const height = Math.ceil(Math.max(...bounds.map(b => b.bottom)) - top);
+
+  const svg = svgNode('svg', {
+    xmlns: SVG_NS, width: width, height: height,
+    viewBox: `0 0 ${width} ${height}`,
+  });
+
+  // The HTML legend is left-aligned, the exported one is centred: shift each
+  // wrapped row (items sharing a top) by what is left over on its right.
+  const rowShift = bounds.map(box => {
+    const row = bounds.filter(other => Math.abs(other.top - box.top) < 1);
+    return (width - (Math.max(...row.map(b => b.right))
+                     - Math.min(...row.map(b => b.left)))) / 2
+           - (Math.min(...row.map(b => b.left)) - left);
+  });
+
+  items.forEach((item, i) => {
+    const box = bounds[i];
+    const group = svgNode('g', {opacity: item.style.opacity || 1,
+                                transform: `translate(${rowShift[i]}, 0)`});
+    const at = el => {
+      const rect = el.getBoundingClientRect();
+      return {x: rect.left - left, y: rect.top - top,
+              w: rect.width, h: rect.height};
+    };
+
+    // The curve line, a top border on screen (see createLegendItem).
+    const hBar = item.querySelector('div[style*="border-top"]');
+    const bar = at(hBar);
+    // The stroke straddles y, the border is drawn below it: shift by half.
+    group.appendChild(svgNode('line', {
+      x1: bar.x, x2: bar.x + bar.w,
+      y1: bar.y + bar.h / 2, y2: bar.y + bar.h / 2,
+      stroke: getComputedStyle(hBar).borderTopColor, 'stroke-width': 2,
+    }));
+
+    // Marker: the path is drawn around (15, 15) of its holder <svg>, so line
+    // that point up with the middle of the box the <svg> actually occupies.
+    const symbol = item.querySelector('svg');
+    const marker = at(symbol);
+    const holder = svgNode('g', {
+      transform: `translate(${marker.x + marker.w / 2 - 15}, `
+                 + `${marker.y + marker.h / 2 - 15})`,
+    });
+    Array.from(symbol.children).forEach(
+      child => holder.appendChild(child.cloneNode(true)));
+    group.appendChild(holder);
+
+    const label = item.querySelector('.curve');
+    const style = getComputedStyle(label);
+    const text = svgNode('text', {
+      x: at(label).x, y: (box.top + box.bottom) / 2 - top,
+      // svg2pdf reads alignment-baseline (or vertical-align) only, it ignores
+      // dominant-baseline: with that one the text comes out half a line high.
+      'alignment-baseline': 'central',
+      'font-family': style.fontFamily, 'font-size': style.fontSize,
+      fill: style.color,
+    });
+    text.textContent = label.textContent;
+    group.appendChild(text);
+
+    svg.appendChild(group);
+  });
+
+  return {svg: svg, width: width, height: height};
 };
 
 // Matplotlib's loc='best', roughly: drop the legend in whichever corner of the
@@ -817,8 +933,8 @@ const exportPDF = (kind) => {
     + {figure: '', legend: '_legend', both: '_with_legend'}[kind];
 
   if (kind === 'legend') {
-    printToPDF(document.getElementById('plot_legend').outerHTML, filename,
-               legendPrintCSS(), legendPrintWidth());
+    const legend = legendSVG();
+    svgToPDF(legend.svg, filename, legend.width, legend.height);
     return false;
   }
 
@@ -843,8 +959,11 @@ const exportPDF = (kind) => {
   }
 
   Plotly.toImage(figure, {format: 'svg', width: width, height: height})
-    .then(dataUrl => printToPDF(
-      decodeURIComponent(dataUrl.split(',')[1]), filename, '', width))
+    .then(dataUrl => svgToPDF(
+      new DOMParser().parseFromString(
+        decodeURIComponent(dataUrl.split(',')[1]), 'image/svg+xml')
+        .documentElement,
+      filename, width, height))
     .catch(err => console.error('PDF export failed:', err));
 
   return false;
@@ -1823,8 +1942,7 @@ const createLegendItem = (curve, color, symbolNumber) => {
   textContainer.className = 'curve';
   textContainer.appendChild(document.createTextNode(curve));
 
-  // A border, not a background: printing drops background colors unless the
-  // user ticks "Background graphics", borders always print.
+  // The curve line, drawn as a top border. legendSVG() picks it out by that.
   const hBar = document.createElement('div');
   hBar.style.height = '0';
   hBar.style.width = '30px';
