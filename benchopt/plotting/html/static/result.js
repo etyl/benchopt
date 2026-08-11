@@ -791,8 +791,13 @@ const svgNode = (tag, attrs) => {
 // every piece from the live layout: the export then wraps exactly like what
 // is on screen, whatever width the resize handle was dragged to.
 const legendSVG = () => {
-  const items = Array.from(document.querySelectorAll('#plot_legend .curve'),
-                           label => label.parentElement);
+  const all = Array.from(document.querySelectorAll('#plot_legend .curve'),
+                         label => label.parentElement);
+  // Hidden curves are filtered out
+  const hidden = all.filter(
+    item => !isVisible(item.querySelector('.curve').textContent));
+  hidden.forEach(item => { item.style.display = 'none'; });
+  const items = all.filter(item => !hidden.includes(item));
   const bounds = items.map(item => item.getBoundingClientRect());
   const left = Math.min(...bounds.map(b => b.left));
   const top = Math.min(...bounds.map(b => b.top));
@@ -815,8 +820,7 @@ const legendSVG = () => {
 
   items.forEach((item, i) => {
     const box = bounds[i];
-    const group = svgNode('g', {opacity: item.style.opacity || 1,
-                                transform: `translate(${rowShift[i]}, 0)`});
+    const group = svgNode('g', {transform: `translate(${rowShift[i]}, 0)`});
     const at = el => {
       const rect = el.getBoundingClientRect();
       return {x: rect.left - left, y: rect.top - top,
@@ -861,6 +865,7 @@ const legendSVG = () => {
     svg.appendChild(group);
   });
 
+  hidden.forEach(item => { item.style.display = 'flex'; });
   return {svg: svg, width: width, height: height};
 };
 
@@ -946,7 +951,9 @@ const exportPDF = (kind) => {
   // affects the export, not what's on screen.
   let figure = plot;
   if (kind === 'both') {
-    const data = getChartData();
+    // Drop the hidden curves
+    const data = getChartData().filter(
+      trace => trace.visible !== 'legendonly');
     // plot.layout, not getLayout(): it carries what is on screen right now,
     // including the axis ranges and the log dtick applied on resize.
     const layout = {...plot.layout, showlegend: true};
