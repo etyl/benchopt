@@ -28,6 +28,10 @@ CLI
 PLOT
 ~~~~
 
+- Table cells can be formatted with ``**bold**``, ``*italic*`` and
+  ``__underlined__`` markers.
+  By `Hippolyte Verninas`_
+
 - Change the plotly style to make it more like matplotlib.
   By `Hippolyte Verninas`_ (:gh:`966`)
 
