@@ -394,7 +394,7 @@ const getScatterData = () => {
       curves.push({
         type: 'scatter',
         mode: 'lines',
-        legend: false,
+        showlegend: false,
         line: {
           width: 0,
           color: curveData.color,
@@ -424,7 +424,7 @@ const getScatterData = () => {
       curves.push({
         type: 'scatter',
         mode: 'lines',
-        legend: false,
+        showlegend: false,
         line: {
           width: 0,
           color: curveData.color,
