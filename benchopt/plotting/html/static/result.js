@@ -1879,13 +1879,17 @@ const renderLegend = () => {
   // Width drag handle (the height follows from how the items wrap). Appended
   // last since the loop above starts from an empty legend.
   legend.appendChild(makeResizeHandle(legend, 'x', clampLegendWidth));
-  legend.style.width = '';
+  legend.style.width = legendWidth;
 }
+
+// Width the user dragged the legend to ('' until they do).
+let legendWidth = '';
 
 // The legend never gets wider than the column holding it.
 const clampLegendWidth = (legend) => {
   const max = legend.parentElement.clientWidth;
   if (legend.offsetWidth > max) legend.style.width = `${max}px`;
+  legendWidth = legend.style.width;
 };
 
 /**
