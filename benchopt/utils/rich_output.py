@@ -524,8 +524,4 @@ def make_terminal_output(n_repetitions=None, show_progress=None, pdb=False,
     from ..config import get_setting
     if pdb or get_setting('no_rich') or not sys.stdout.isatty():
         return TerminalOutput(n_repetitions, show_progress)
-    try:
-        import rich  # noqa: F401
-    except ImportError:
-        return TerminalOutput(n_repetitions, show_progress)
     return RichOutput(n_repetitions, show_progress, n_jobs=n_jobs)
