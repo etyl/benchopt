@@ -5,18 +5,6 @@ from .utils.parametrized_name_mixin import is_matched
 from .utils.run_context import RunContext
 
 
-def buffer_iterator(it):
-    """Buffer the output of an iterator to repeat it without recomputing."""
-    buffer = []
-
-    def buffered_it(buffer):
-        for val in it:
-            buffer.append(val)
-            yield val
-
-    return buffered_it(buffer), buffer
-
-
 def _get_all_runs(benchmark, solvers=None, forced_solvers=None,
                   datasets=None, objectives=None, terminal=None):
     """Generator with all combinations to run for the benchmark.
@@ -49,19 +37,30 @@ def _get_all_runs(benchmark, solvers=None, forced_solvers=None,
     """
     from .benchmark import _list_parametrized_classes
 
-    all_datasets = _list_parametrized_classes(*datasets)
-    all_solvers, solvers_buffer = buffer_iterator(
-        _list_parametrized_classes(*solvers)
+    # Listing the parametrized classes only instantiates them, the data is
+    # only loaded in `get_solver_kwargs`, so this is cheap enough to be
+    # resolved upfront to know how many runs the benchmark contains.
+    all_datasets = list(_list_parametrized_classes(*datasets))
+    all_solvers = list(_list_parametrized_classes(*solvers))
+    n_configs = (
+        sum(is_installed for _, is_installed in all_datasets)
+        * sum(is_installed for _, is_installed in all_solvers)
     )
+
     for dataset, is_installed in all_datasets:
         terminal.set(dataset=dataset)
         if not is_installed:
             terminal.show_status('not installed', dataset=True)
             continue
         terminal.display_dataset()
-        all_objectives = _list_parametrized_classes(
+        # A new objective instance is created for each dataset, as it holds
+        # the data once `_set_dataset` has been called.
+        all_objectives = list(_list_parametrized_classes(
             *objectives, check_installed=False
-        )
+        ))
+        terminal.set_n_configs(n_configs * sum(
+            is_installed for _, is_installed in all_objectives
+        ))
         for objective, is_installed in all_objectives:
             terminal.set(objective=objective)
             if not is_installed:
@@ -82,7 +81,6 @@ def _get_all_runs(benchmark, solvers=None, forced_solvers=None,
                     dataset=dataset, objective=objective, solver=solver,
                     force=force, terminal=terminal
                 )
-            all_solvers = solvers_buffer
 
 
 def get_solver_kwargs(
