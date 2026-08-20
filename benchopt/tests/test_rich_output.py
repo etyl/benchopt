@@ -1,6 +1,7 @@
 import io
 import os
 import pickle
+import sys
 
 from rich.console import Console
 
@@ -180,9 +181,18 @@ def test_rich_output_unordered_results():
     ]
 
 
-def test_make_terminal_output():
+def test_make_terminal_output(monkeypatch):
     # stdout is captured by pytest, hence not a terminal.
     assert type(make_terminal_output(1, True)) is TerminalOutput
+
+    # The display can be turned off, from the config file or the environment.
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    assert type(make_terminal_output(1, True)) is RichOutput
+    monkeypatch.setenv("BENCHOPT_NO_RICH", "true")
+    assert type(make_terminal_output(1, True)) is TerminalOutput
+    # Unlike a bare environment variable check, `0` does not disable it.
+    monkeypatch.setenv("BENCHOPT_NO_RICH", "0")
+    assert type(make_terminal_output(1, True)) is RichOutput
 
 
 def test_rich_output_steps(tmp_path):

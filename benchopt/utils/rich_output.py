@@ -521,7 +521,8 @@ class RichOutput(TerminalOutput):
 def make_terminal_output(n_repetitions=None, show_progress=None, pdb=False,
                          n_jobs=1):
     """Rich live display if running in an interactive terminal, plain else."""
-    if pdb or os.environ.get('BENCHOPT_NO_RICH') or not sys.stdout.isatty():
+    from ..config import get_setting
+    if pdb or get_setting('no_rich') or not sys.stdout.isatty():
         return TerminalOutput(n_repetitions, show_progress)
     try:
         import rich  # noqa: F401
