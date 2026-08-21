@@ -93,7 +93,7 @@ def _redirect_fds(log_file, mode="w"):
     """
     sys.stdout.flush()
     sys.stderr.flush()
-    tty = os.fdopen(os.dup(1), "w")
+    tty = os.fdopen(os.dup(1), "w", encoding="utf-8", errors="replace")
     saved_out, saved_err = os.dup(1), os.dup(2)
     log = open(log_file, mode)
     os.dup2(log.fileno(), 1)
